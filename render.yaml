@@ -1,0 +1,11 @@
+# Render Blueprint — deploys the live quiz as a free Node web service.
+# In Render: New + > Blueprint > connect this repo, and it reads this file.
+services:
+  - type: web
+    name: envoy-emea-quiz
+    runtime: node
+    plan: free
+    buildCommand: ""        # no dependencies to install
+    startCommand: node server.js
+    healthCheckPath: /api/info
+    autoDeploy: true

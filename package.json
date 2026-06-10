@@ -1,0 +1,14 @@
+{
+  "name": "envoy-emea-quiz-live",
+  "version": "1.0.0",
+  "description": "Kahoot-style live multiplayer quiz for the Envoy EMEA office, based on the Envoy changelog.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "private": true
+}

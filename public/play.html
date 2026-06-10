@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Envoy EMEA Quiz — Join</title>
+<link rel="stylesheet" href="/quiz.css" />
+</head>
+<body>
+<div class="app">
+  <div class="card" id="card"></div>
+  <p class="footer-note">Envoy EMEA Quiz</p>
+</div>
+
+<script>
+const SYMBOLS = ["▲","◆","●","■"];
+const card = document.getElementById('card');
+let me = JSON.parse(sessionStorage.getItem('envoyPlayer') || 'null'); // {id,name}
+let state = null;
+let lastResult = null;
+let answeredQ = -1;        // which qIndex we've answered
+let es = null;
+let tick = null;
+
+function logoSVG(big){
+  return `<svg class="logo ${big?'big':''}" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg" aria-label="Envoy">
+    <rect width="500" height="500" rx="96" fill="#FB4B36"/>
+    <rect x="135" y="110" width="230" height="280" rx="34" fill="none" stroke="#fff" stroke-width="26"/>
+    <rect x="200" y="170" width="95" height="26" rx="13" fill="#fff"/>
+    <rect x="200" y="237" width="120" height="26" rx="13" fill="#fff"/>
+    <rect x="200" y="304" width="95" height="26" rx="13" fill="#fff"/></svg>`;
+}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+function connect(){
+  if(es) es.close();
+  es = new EventSource('/events?role=player&id='+encodeURIComponent(me.id));
+  es.addEventListener('state', e => { state = JSON.parse(e.data); render(); });
+  es.addEventListener('result', e => { lastResult = JSON.parse(e.data); render(); });
+  es.addEventListener('reset', () => { // server restarted / unknown id
+    sessionStorage.removeItem('envoyPlayer'); me = null; renderJoin('This game is no longer available — rejoin.');
+  });
+}
+
+function secondsLeft(){
+  if(!state || !state.startTs) return 60;
+  return Math.max(0, Math.ceil((state.startTs + state.durationMs - Date.now())/1000));
+}
+
+/* ---------- Join ---------- */
+function renderJoin(err){
+  card.innerHTML = `
+    ${logoSVG(true)}
+    <div class="pill">EMEA Office</div>
+    <h1>Join the Quiz</h1>
+    <p class="subtitle">Enter a name your colleagues will recognise.</p>
+    <input id="name" type="text" placeholder="Your name…" autocomplete="off" maxlength="24" />
+    ${err?`<p class="incorrect" style="margin:-6px 0 12px;font-weight:700">${esc(err)}</p>`:''}
+    <button class="btn" id="join">Join</button>`;
+  const input = document.getElementById('name');
+  input.focus();
+  input.addEventListener('keydown', e=>{ if(e.key==='Enter') doJoin(); });
+  document.getElementById('join').onclick = doJoin;
+}
+async function doJoin(){
+  const name = document.getElementById('name').value.trim();
+  if(!name) return;
+  const r = await (await fetch('/api/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})).json();
+  if(r.error) return renderJoin(r.error);
+  me = { id:r.id, name:r.name };
+  sessionStorage.setItem('envoyPlayer', JSON.stringify(me));
+  connect();
+}
+
+/* ---------- Render by phase ---------- */
+function render(){
+  clearInterval(tick);
+  if(!me) return renderJoin();
+  if(!state) return;
+  if(state.phase === 'lobby')    return renderWaiting();
+  if(state.phase === 'question') return renderQuestion();
+  if(state.phase === 'reveal')   return renderResult();
+  if(state.phase === 'ended')    return renderEnded();
+}
+
+function renderWaiting(){
+  card.innerHTML = `
+    ${logoSVG(true)}
+    <div class="pill">You're in!</div>
+    <h1>${esc(me.name)}</h1>
+    <p class="subtitle">Waiting for the host to start the quiz…<br>${state.playerCount} player${state.playerCount===1?'':'s'} ready.</p>`;
+}
+
+function renderQuestion(){
+  const Q = state.question;
+  const already = answeredQ === state.qIndex;
+  if(already) return renderLocked();
+  card.innerHTML = `
+    <div class="qbar">
+      <div class="timer" id="timer">${secondsLeft()}</div>
+      <div class="qcount">Q${state.qIndex+1} / ${state.total}</div>
+    </div>
+    <div class="question" style="font-size:1.3rem;min-height:auto;padding:10px 4px 18px">${esc(Q.q)}</div>
+    <div class="answers" id="answers">
+      ${Q.answers.map((a,i)=>`<button class="answer a${i}" data-i="${i}">
+        <span class="sym">${SYMBOLS[i]}</span><span>${esc(a)}</span></button>`).join('')}
+    </div>`;
+  document.querySelectorAll('.answer').forEach(b=> b.onclick = ()=>choose(+b.dataset.i, b));
+  const update = ()=>{ const t=document.getElementById('timer'); if(t) t.textContent = secondsLeft(); };
+  update(); tick = setInterval(update, 250);
+}
+
+async function choose(i, btn){
+  answeredQ = state.qIndex;
+  document.querySelectorAll('.answer').forEach(b=>{
+    b.disabled = true;
+    if(+b.dataset.i === i) b.classList.add('mine'); else b.classList.add('dim');
+  });
+  await fetch('/api/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:me.id,choice:i})});
+  setTimeout(renderLocked, 500);
+}
+
+function renderLocked(){
+  card.innerHTML = `
+    ${logoSVG(false)}
+    <div class="pill">Answer locked in</div>
+    <h1>Nice!</h1>
+    <p class="subtitle">Waiting for the timer / other players…<br>Watch the host screen.</p>`;
+}
+
+function renderResult(){
+  // Per-player result only — the correct answer is never shown
+  const r = lastResult || { correct:false, gain:0, score:0, rank:'-', total:state.playerCount };
+  card.innerHTML = `
+    ${logoSVG(false)}
+    <h1 class="${r.correct?'correct':'incorrect'}">${r.correct?'Correct! 🎉':'No points 😅'}</h1>
+    ${r.correct?`<p class="gain correct">+${r.gain} points</p>`:`<p class="subtitle">Better luck on the next one!</p>`}
+    <div class="lb"><div class="lb-row"><span class="rank">${r.rank}</span>
+      <span>${esc(me.name)}</span><span class="score">${r.score} pts</span></div></div>
+    <p class="subtitle">You're <b>#${r.rank}</b> of ${r.total}. Waiting for the next question…</p>`;
+}
+
+function renderEnded(){
+  const r = lastResult || {};
+  const mine = state.leaderboard.find(p=>p.id===me.id) || {score:0};
+  const rank = state.leaderboard.findIndex(p=>p.id===me.id)+1;
+  const medal = rank===1?'🥇':rank===2?'🥈':rank===3?'🥉':'🎉';
+  card.innerHTML = `
+    ${logoSVG(true)}
+    <div class="pill">Game Over</div>
+    <h1>${medal} #${rank}</h1>
+    <p class="subtitle">${esc(me.name)} — ${mine.score} pts<br>out of ${state.playerCount} players</p>
+    <p class="subtitle">Final standings are on the host screen.</p>`;
+}
+
+/* ---------- boot ---------- */
+if(me){ connect(); } else { renderJoin(); }
+</script>
+</body>
+</html>

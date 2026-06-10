@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Envoy EMEA Quiz — Host</title>
+<link rel="stylesheet" href="/quiz.css" />
+</head>
+<body>
+<div class="app">
+  <div class="card" id="card"></div>
+  <p class="footer-note">Envoy EMEA Quiz · Host screen · changelog.envoy.com edition</p>
+</div>
+
+<script>
+const SYMBOLS = ["▲","◆","●","■"];
+const card = document.getElementById('card');
+let info = { joinUrl: '', total: 0, time: 60 };
+let state = null;
+let tick = null;
+
+function logoSVG(big){
+  return `<svg class="logo ${big?'big':''}" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg" aria-label="Envoy">
+    <rect width="500" height="500" rx="96" fill="#FB4B36"/>
+    <rect x="135" y="110" width="230" height="280" rx="34" fill="none" stroke="#fff" stroke-width="26"/>
+    <rect x="200" y="170" width="95" height="26" rx="13" fill="#fff"/>
+    <rect x="200" y="237" width="120" height="26" rx="13" fill="#fff"/>
+    <rect x="200" y="304" width="95" height="26" rx="13" fill="#fff"/></svg>`;
+}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function post(action){ fetch('/api/host',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})}); }
+
+async function init(){
+  info = await (await fetch('/api/info')).json();
+  const es = new EventSource('/events?role=host&id=host');
+  es.addEventListener('state', e => { state = JSON.parse(e.data); render(); });
+}
+
+function secondsLeft(){
+  if(!state || !state.startTs) return info.time;
+  return Math.max(0, Math.ceil((state.startTs + state.durationMs - Date.now())/1000));
+}
+
+function render(){
+  clearInterval(tick);
+  if(!state) return;
+  if(state.phase === 'lobby')    return renderLobby();
+  if(state.phase === 'question') return renderQuestion();
+  if(state.phase === 'reveal')   return renderReveal();
+  if(state.phase === 'ended')    return renderEnded();
+}
+
+function renderLobby(){
+  card.innerHTML = `
+    ${logoSVG(true)}
+    <div class="pill">Live Multiplayer</div>
+    <h1>Envoy EMEA Quiz</h1>
+    <p class="subtitle">Trivia on the latest Envoy product updates.</p>
+    <div class="joinbox">
+      <div class="label">On your phone, go to</div>
+      <div class="url">${esc(info.joinUrl)}</div>
+    </div>
+    <div class="count">${state.playerCount} player${state.playerCount===1?'':'s'} joined</div>
+    <div class="players">${state.leaderboard.map(p=>`<span class="chip">${esc(p.name)}</span>`).join('')}</div>
+    <button class="btn" id="start" ${state.playerCount===0?'disabled':''}>
+      ${state.playerCount===0?'Waiting for players…':'Start Quiz'}
+    </button>`;
+  const b = document.getElementById('start');
+  if(b) b.onclick = ()=>post('start');
+}
+
+function renderQuestion(){
+  const Q = state.question;
+  card.innerHTML = `
+    <div class="qbar">
+      <div class="timer" id="timer">${secondsLeft()}</div>
+      <div class="qcount">Question ${state.qIndex+1} / ${state.total}</div>
+      <div style="width:48px">${logoSVG(false).replace('class="logo "','class="logo" style="width:48px;height:48px;margin:0"')}</div>
+    </div>
+    <div class="progress"><i id="bar"></i></div>
+    <div class="question">${esc(Q.q)}</div>
+    <div class="answers">
+      ${Q.answers.map((a,i)=>`<div class="answer a${i}"><span class="sym">${SYMBOLS[i]}</span><span>${esc(a)}</span></div>`).join('')}
+    </div>
+    <div class="count" style="margin-top:18px">${state.answeredCount} / ${state.playerCount} answered</div>
+    <button class="btn ghost" id="skip">Skip to results</button>`;
+  document.getElementById('skip').onclick = ()=>post('reveal');
+  const total = info.time;
+  const update = ()=>{
+    const s = secondsLeft();
+    const t = document.getElementById('timer'); if(t) t.textContent = s;
+    const bar = document.getElementById('bar'); if(bar) bar.style.width = (s/total*100)+'%';
+  };
+  update(); tick = setInterval(update, 250);
+}
+
+function renderReveal(){
+  const Q = state.question;
+  const dist = state.distribution || [0,0,0,0];
+  const max = Math.max(1, ...dist);
+  card.innerHTML = `
+    <div class="pill">Question ${state.qIndex+1} / ${state.total}</div>
+    <div class="question" style="min-height:auto">${esc(Q.q)}</div>
+    <div class="bars">
+      ${Q.answers.map((a,i)=>`<div class="bar a${i}" style="height:${20+dist[i]/max*160}px">${dist[i]}</div>`).join('')}
+    </div>
+    <div class="subtitle">${Q.answers.map((a,i)=>`${SYMBOLS[i]} ${esc(a)}`).join('  ·  ')}</div>
+    <h1 style="font-size:1.4rem;margin:18px 0 6px">Leaderboard</h1>
+    ${leaderboardHTML(5)}
+    <button class="btn" id="next">${state.qIndex+1 < state.total ? 'Next Question' : 'Final Results'}</button>`;
+  document.getElementById('next').onclick = ()=>post('next');
+}
+
+function renderEnded(){
+  card.innerHTML = `
+    ${logoSVG(true)}
+    <div class="pill">Game Over</div>
+    <h1>🏆 Final Leaderboard</h1>
+    <div style="margin:18px 0">${leaderboardHTML(99)}</div>
+    <button class="btn" id="again">Play Again (same players)</button>`;
+  document.getElementById('again').onclick = ()=>post('reset');
+}
+
+function leaderboardHTML(limit){
+  const medals = ['gold','silver','bronze'];
+  const rows = state.leaderboard.slice(0,limit);
+  if(!rows.length) return '<p class="subtitle">No players</p>';
+  return `<div class="lb">${rows.map((p,i)=>`
+    <div class="lb-row ${medals[i]||''}">
+      <span class="rank">${i+1}</span><span>${esc(p.name)}</span><span class="score">${p.score} pts</span>
+    </div>`).join('')}</div>`;
+}
+
+init();
+</script>
+</body>
+</html>
