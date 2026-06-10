@@ -65,7 +65,11 @@ function renderJoin(err){
 async function doJoin(){
   const name = document.getElementById('name').value.trim();
   if(!name) return;
-  const r = await (await fetch('/api/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})).json();
+  let r;
+  try {
+    const resp = await fetch('/api/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    r = await resp.json();
+  } catch(e){ return renderJoin("Can't reach the quiz server — check the URL / Wi-Fi and try again."); }
   if(r.error) return renderJoin(r.error);
   me = { id:r.id, name:r.name };
   sessionStorage.setItem('envoyPlayer', JSON.stringify(me));

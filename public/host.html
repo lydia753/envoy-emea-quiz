@@ -30,10 +30,28 @@ function logoSVG(big){
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function post(action){ fetch('/api/host',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})}); }
 
+function renderLoading(){
+  card.innerHTML = `${logoSVG(true)}<div class="pill">Envoy EMEA Quiz</div><h1>Connecting…</h1>`;
+}
+function renderError(){
+  card.innerHTML = `${logoSVG(true)}
+    <div class="pill">Not connected</div>
+    <h1>Can't reach the quiz server</h1>
+    <p class="subtitle">This page has to be served by the running Node server — not opened as a file
+    or via GitHub Pages (those can't run the backend).<br><br>
+    Run <b>node server.js</b> and open the URL it prints, or open your deployed Render URL.</p>
+    <button class="btn" onclick="location.reload()">Retry</button>`;
+}
 async function init(){
-  info = await (await fetch('/api/info')).json();
+  renderLoading();
+  try {
+    const r = await fetch('/api/info');
+    if(!r.ok) throw new Error('backend unavailable');
+    info = await r.json();
+  } catch(e){ return renderError(); }
   const es = new EventSource('/events?role=host&id=host');
   es.addEventListener('state', e => { state = JSON.parse(e.data); render(); });
+  es.onerror = () => { if(!state) renderError(); };
 }
 
 function secondsLeft(){
