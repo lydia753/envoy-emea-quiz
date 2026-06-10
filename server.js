@@ -149,12 +149,25 @@ function nextStep() {
 }
 
 function resetGame() {
+  // "Play again" — keep the same players, zero their scores
   clearTimeout(game.timer);
   game.phase = 'lobby';
   game.qIndex = -1;
   for (const p of game.players.values()) {
     p.score = 0; p.choice = -1; p.answered = false; p.gain = 0; p.correct = false;
   }
+  broadcast();
+}
+
+function clearGame() {
+  // "New game" — remove ALL players and return to an empty lobby
+  clearTimeout(game.timer);
+  game.phase = 'lobby';
+  game.qIndex = -1;
+  for (const p of game.players.values()) {
+    try { if (p.res && !p.res.writableEnded) { emit(p.res, 'reset', {}); p.res.end(); } } catch (e) {}
+  }
+  game.players.clear();
   broadcast();
 }
 
@@ -275,6 +288,7 @@ const server = http.createServer(async (req, res) => {
     else if (action === 'reveal') reveal();
     else if (action === 'next') nextStep();
     else if (action === 'reset') resetGame();
+    else if (action === 'clear') clearGame();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true }));
   }
